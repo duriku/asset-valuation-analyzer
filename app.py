@@ -48,6 +48,17 @@ def fx_sanity_check(data, fx_expected_ranges):
         except Exception as e:
             print(f"Could not check {fx}: {e}")
 
+def compute_performance(series, periods):
+    result = {}
+    last = series[-1]
+    for name, offset in periods.items():
+        if len(series) > offset:
+            prev = series[-1 - offset]
+            result[name] = 100 * (last - prev) / prev if prev else None
+        else:
+            result[name] = None
+    return result
+
 # ====== Read Tickers ======
 with open('assets.txt') as f:
     assets = [line.strip() for line in f if line.strip()]
@@ -76,10 +87,18 @@ fx_expected_ranges = {
     'USDHUF=X': (300, 420),
 }
 
+performance_offsets = {
+    '24h': 1,
+    '7d': 5,
+    '1m': 21,
+    '3m': 63,
+    '1y': 252
+}
+
 # ====== Download Data ======
 data = yf.download(
     tickers + [v for v in fx_to_usd.values() if v and v not in tickers],
-    period='1y',
+    period='15mo',
     interval='1d',
     group_by='ticker',
     threads=True,
@@ -126,7 +145,8 @@ for ticker in assets:
         if is_fx(ticker):
             z_score = -z_score
 
-        # Technical indicators
+        perf = compute_performance(series_usd, performance_offsets)
+
         if len(series_usd) >= 200:
             rsi = RSIIndicator(close=series_usd).rsi()[-1]
             bb = BollingerBands(close=series_usd)
@@ -150,6 +170,11 @@ for ticker in assets:
             'BB_Lower': bb_lower,
             '%FromMA50': pct_from_ma50,
             '%FromMA200': pct_from_ma200,
+            '24h': perf['24h'],
+            '7d': perf['7d'],
+            '1m': perf['1m'],
+            '3m': perf['3m'],
+            '1y': perf['1y'],
         })
     except Exception as e:
         print(f"Error for {ticker}: {e}")
@@ -171,12 +196,15 @@ for ticker in currencies:
             series_usd = pd.Series([1.0]*len(series), index=series.index)
         else:
             series_usd = series * fx_rate
+
         price_usd = series_usd[-1]
         mean = series_usd.mean()
         std = series_usd.std()
         z_score = (price_usd - mean) / std if std else 0
         if is_fx(ticker):
             z_score = -z_score
+
+        perf = compute_performance(series_usd, performance_offsets)
 
         if len(series_usd) >= 200:
             rsi = RSIIndicator(close=series_usd).rsi()[-1]
@@ -201,6 +229,11 @@ for ticker in currencies:
             'BB_Lower': bb_lower,
             '%FromMA50': pct_from_ma50,
             '%FromMA200': pct_from_ma200,
+            '24h': perf['24h'],
+            '7d': perf['7d'],
+            '1m': perf['1m'],
+            '3m': perf['3m'],
+            '1y': perf['1y'],
         })
     except Exception as e:
         print(f"Error for currency {ticker}: {e}")
@@ -208,6 +241,8 @@ for ticker in currencies:
 # ====== Output ======
 asset_df = pd.DataFrame(results).sort_values('Z-score', ascending=False)
 currency_df = pd.DataFrame(currency_results).sort_values('Z-score', ascending=False)
+
+pd.set_option('display.float_format', '{:,.2f}'.format)
 
 print("\n=== All Assets (excluding currencies) ===")
 print(asset_df.to_string(index=False))
