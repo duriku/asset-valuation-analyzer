@@ -11,6 +11,14 @@ from logic.alerts import (
     strong_sell_alert, strong_buy_alert,
     less_strong_sell_alert, less_strong_buy_alert
 )
+# Add these imports to your main.py
+from output.report import (
+    print_asset_table, print_alerts, print_rebalance,  # Original functions
+    print_asset_table_modern, print_alerts_modern,     # New modern HTML
+    create_interactive_dashboard                        # Interactive dashboard
+)
+
+
 from logic.rebalance import rebalance_trades
 from output.report import print_asset_table, print_alerts, print_rebalance
 
@@ -93,6 +101,23 @@ def main():
 
     trades = rebalance_trades(asset_df, top_n=3)
     print_rebalance(trades)
+
+    # Generate modern responsive HTML reports
+    print("\n" + "="*60)
+    print("🚀 Generating Modern Responsive Reports...")
+
+    print_asset_table_modern(asset_df, "modern_asset_report.html")
+    print_alerts_modern(asset_df, "modern_alerts_report.html")
+
+    print("\n📊 HTML Reports Generated:")
+    print("- modern_asset_report.html (Responsive Bootstrap table)")
+    print("- modern_alerts_report.html (Alert-specific dashboard)")
+
+    # Optional: Launch interactive dashboard
+    print("\n🎯 Want to launch interactive dashboard? (y/n): ", end="")
+    if input().lower().startswith('y'):
+        create_interactive_dashboard(asset_df, trades)
+
 
 if __name__ == "__main__":
     main()

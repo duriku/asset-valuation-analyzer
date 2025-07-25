@@ -1,0 +1,80 @@
+
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Rebalance Suggestions</title>
+        <style>
+            body {
+                font-family: Arial, sans-serif;
+                margin: 20px;
+                background-color: #f9f9f9;
+            }
+            .container {
+                max-width: 1000px;
+                margin: 0 auto;
+                background-color: white;
+                padding: 20px;
+                border-radius: 8px;
+                box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            }
+            h1 {
+                color: #333;
+                text-align: center;
+                border-bottom: 3px solid #9932CC;
+                padding-bottom: 15px;
+            }
+            .trade {
+                background-color: #f8f9fa;
+                padding: 15px;
+                margin: 10px 0;
+                border-radius: 5px;
+                border-left: 4px solid #9932CC;
+            }
+            .sell {
+                color: #AA0000;
+                font-weight: bold;
+            }
+            .buy {
+                color: #00AA00;
+                font-weight: bold;
+            }
+            .delta {
+                color: #007ACC;
+                font-weight: bold;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>⚖️ Suggested Rebalance Trades</h1>
+    
+            <div class="trade">
+                <span class="sell">SELL MSFT</span> (Z=2.82) 
+                → 
+                <span class="buy">BUY XLV</span> (Z=-0.98) 
+                | 
+                <span class="delta">ΔZ = 3.81</span>
+            </div>
+            
+            <div class="trade">
+                <span class="sell">SELL ARKK</span> (Z=2.66) 
+                → 
+                <span class="buy">BUY INTC</span> (Z=-0.77) 
+                | 
+                <span class="delta">ΔZ = 3.42</span>
+            </div>
+            
+            <div class="trade">
+                <span class="sell">SELL NVDA</span> (Z=2.53) 
+                → 
+                <span class="buy">BUY AAPL</span> (Z=-0.20) 
+                | 
+                <span class="delta">ΔZ = 2.73</span>
+            </div>
+            
+        </div>
+    </body>
+    </html>
+    
