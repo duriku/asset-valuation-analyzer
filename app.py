@@ -247,6 +247,77 @@ pd.set_option('display.float_format', '{:,.2f}'.format)
 print("\n=== All Assets (excluding currencies) ===")
 print(asset_df.to_string(index=False))
 
+# STRONG ALERTS
+def strong_sell_alert(row):
+    return (
+        row['Z-score'] is not None and row['RSI'] is not None and row['%FromMA200'] is not None and row['1m'] is not None and row['3m'] is not None
+        and row['Z-score'] > 2
+        and row['RSI'] > 70
+        and row['%FromMA200'] > 20
+        and (row['1m'] > 10 or row['3m'] > 30)
+    )
+
+def strong_buy_alert(row):
+    return (
+        row['Z-score'] is not None and row['RSI'] is not None and row['%FromMA200'] is not None and row['1y'] is not None
+        and row['Z-score'] < -2
+        and row['RSI'] < 35
+        and row['%FromMA200'] < -20
+        and row['1y'] < -20
+    )
+
+# LESS STRONG ALERTS
+def less_strong_sell_alert(row):
+    return (
+        row['Z-score'] is not None and row['RSI'] is not None and row['%FromMA200'] is not None
+        and row['Z-score'] > 1.5
+        and row['RSI'] > 65
+        and row['%FromMA200'] > 10
+        and ((row['1m'] is not None and row['1m'] > 5) or (row['3m'] is not None and row['3m'] > 15))
+        and not row.get('Strong Sell Alert', False)
+    )
+
+def less_strong_buy_alert(row):
+    return (
+        row['Z-score'] is not None and row['RSI'] is not None and row['%FromMA200'] is not None and row['1y'] is not None
+        and row['Z-score'] < -1.5
+        and row['RSI'] < 40
+        and row['%FromMA200'] < -10
+        and row['1y'] < -10
+        and not row.get('Strong Buy Alert', False)
+    )
+
+asset_df['Strong Sell Alert'] = asset_df.apply(strong_sell_alert, axis=1)
+asset_df['Strong Buy Alert'] = asset_df.apply(strong_buy_alert, axis=1)
+asset_df['Less Strong Sell Alert'] = asset_df.apply(less_strong_sell_alert, axis=1)
+asset_df['Less Strong Buy Alert'] = asset_df.apply(less_strong_buy_alert, axis=1)
+
+print("\n=== STRONG SELL ALERTS (Overheated) ===")
+if asset_df['Strong Sell Alert'].any():
+    print(asset_df[asset_df['Strong Sell Alert']].to_string(index=False))
+else:
+    print("None found.")
+
+print("\n=== STRONG BUY ALERTS (Washed Out) ===")
+if asset_df['Strong Buy Alert'].any():
+    print(asset_df[asset_df['Strong Buy Alert']].to_string(index=False))
+else:
+    print("None found.")
+
+print("\n=== LESS STRONG SELL ALERTS (Moderate Overheated) ===")
+if asset_df['Less Strong Sell Alert'].any():
+    print(asset_df[asset_df['Less Strong Sell Alert']].to_string(index=False))
+else:
+    print("None found.")
+
+print("\n=== LESS STRONG BUY ALERTS (Moderate Washed Out) ===")
+if asset_df['Less Strong Buy Alert'].any():
+    print(asset_df[asset_df['Less Strong Buy Alert']].to_string(index=False))
+else:
+    print("None found.")
+
+
+
 print("\n=== Currencies / FX ===")
 print(currency_df.to_string(index=False))
 
