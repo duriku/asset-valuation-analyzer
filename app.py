@@ -104,6 +104,21 @@ data = yf.download(
     threads=True,
     auto_adjust=True
 )
+    
+benchmark_ticker = '^GSPC'  # S&P 500
+benchmark_data = yf.download(benchmark_ticker, period='15mo', interval='1d', auto_adjust=True)
+
+# Defensive: ensure benchmark data is valid and non-empty
+if 'Close' in benchmark_data and not benchmark_data['Close'].dropna().empty:
+    benchmark_close = benchmark_data['Close']
+    if isinstance(benchmark_close, pd.DataFrame):
+        benchmark_close = benchmark_close.iloc[:, 0]
+    benchmark_close = benchmark_close.dropna()
+    benchmark_perf = compute_performance(benchmark_close, performance_offsets)
+else:
+    print("⚠️  Benchmark data unavailable or incomplete. Falling back to empty performance.")
+    benchmark_perf = {k: None for k in performance_offsets}
+
 
 fx_sanity_check(data, fx_expected_ranges)
 
@@ -159,6 +174,15 @@ for ticker in assets:
         else:
             rsi = bb_upper = bb_lower = ma50 = ma200 = pct_from_ma50 = pct_from_ma200 = None
 
+        relative_perf = {}
+        for period in performance_offsets.keys():
+            asset_perf = perf[period]
+            bench_perf = benchmark_perf[period]
+            if asset_perf is not None and bench_perf is not None:
+                relative_perf[period + '_RS'] = asset_perf - bench_perf
+            else:
+                relative_perf[period + '_RS'] = None
+
         results.append({
             'Ticker': ticker,
             'Asset Class': asset_class,
@@ -175,6 +199,11 @@ for ticker in assets:
             '1m': perf['1m'],
             '3m': perf['3m'],
             '1y': perf['1y'],
+            '24h_RS': relative_perf['24h_RS'],
+            '7d_RS': relative_perf['7d_RS'],
+            '1m_RS': relative_perf['1m_RS'],
+            '3m_RS': relative_perf['3m_RS'],
+            '1y_RS': relative_perf['1y_RS'],
         })
     except Exception as e:
         print(f"Error for {ticker}: {e}")
@@ -246,6 +275,46 @@ pd.set_option('display.float_format', '{:,.2f}'.format)
 
 print("\n=== All Assets (excluding currencies) ===")
 print(asset_df.to_string(index=False))
+
+def strong_sell_alert(row):
+    return (
+        (
+            row['Z-score'] is not None and row['RSI'] is not None and row['%FromMA200'] is not None
+            and row['1m'] is not None and row['3m'] is not None
+            and row['Z-score'] > 2
+            and row['RSI'] > 70
+            and row['%FromMA200'] > 20
+            and (row['1m'] > 10 or row['3m'] > 30)
+        )
+        or (
+            row['Z-score'] is not None and row['RSI'] is not None and row['%FromMA200'] is not None
+            and row['1m_RS'] is not None and row['3m_RS'] is not None
+            and row['Z-score'] > 2
+            and row['RSI'] > 70
+            and row['%FromMA200'] > 20
+            and (row['1m_RS'] > 5 or row['3m_RS'] > 15)
+        )
+    )
+
+def strong_buy_alert(row):
+    return (
+        (
+            row['Z-score'] is not None and row['RSI'] is not None and row['%FromMA200'] is not None and row['1y'] is not None
+            and row['Z-score'] < -2
+            and row['RSI'] < 35
+            and row['%FromMA200'] < -20
+            and row['1y'] < -20
+        )
+        or (
+            row['Z-score'] is not None and row['RSI'] is not None and row['%FromMA200'] is not None and row['1y_RS'] is not None
+            and row['Z-score'] < -2
+            and row['RSI'] < 35
+            and row['%FromMA200'] < -20
+            and row['1y_RS'] < -10
+        )
+    )
+
+
 
 # STRONG ALERTS
 def strong_sell_alert(row):
