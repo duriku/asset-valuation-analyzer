@@ -1,4 +1,3 @@
-
 # output/report.py
 import pandas as pd
 import plotly.graph_objects as go
@@ -44,7 +43,7 @@ def create_ib_style_html_table(df, title, output_file=None):
             value = row[col]
             if pd.isna(value):
                 row_data[col] = {'value': '--', 'color': '#666666', 'bg': '#f8f9fa'}
-            elif col in ['24h', '7d', '1m', '3m', '1y', '%FromMA50', '%FromMA200']:
+            elif col in ['24h', '7d', '1m', '3m', '1y', '%FromMA50', '%FromMA200', '24h_RS', '7d_RS', '1m_RS', '3m_RS', '1y_RS']:
                 color = get_color_for_percentage(value)
                 bg_color = '#f0f8f0' if value >= 0 else '#fff0f0'
                 row_data[col] = {
@@ -180,10 +179,28 @@ def create_ib_style_html_table(df, title, output_file=None):
                 white-space: nowrap;
                 text-transform: uppercase;
                 letter-spacing: 0.5px;
+                cursor: pointer;
+                user-select: none;
+                position: relative;
+            }}
+            .ib-table th:hover {{
+                background: #bbdefb;
+            }}
+            .ib-table th::after {{
+                content: '⇅';
+                position: absolute;
+                right: 4px;
+                top: 50%;
+                transform: translateY(-50%);
+                opacity: 0.5;
+                font-size: 10px;
             }}
             .ib-table th:first-child {{
                 text-align: left;
                 background: #bbdefb;
+            }}
+            .ib-table th:first-child:hover {{
+                background: #90caf9;
             }}
             .ib-table td {{
                 padding: 6px 12px;
@@ -259,6 +276,49 @@ def create_ib_style_html_table(df, title, output_file=None):
                 }}
             }}
         </style>
+        <script>
+            let sortDirection = {{}};
+            
+            function sortTable(columnIndex, columnName) {{
+                const table = document.querySelector('.ib-table tbody');
+                const rows = Array.from(table.querySelectorAll('tr'));
+                
+                // Toggle sort direction
+                sortDirection[columnName] = sortDirection[columnName] === 'asc' ? 'desc' : 'asc';
+                const direction = sortDirection[columnName];
+                
+                // Update header indicators
+                document.querySelectorAll('.ib-table th').forEach((th, index) => {{
+                    if (index === columnIndex) {{
+                        th.style.background = direction === 'asc' ? '#90caf9' : '#64b5f6';
+                        th.querySelector('::after') || (th.innerHTML += direction === 'asc' ? ' ↑' : ' ↓');
+                    }} else {{
+                        th.style.background = index === 0 ? '#bbdefb' : '#e3f2fd';
+                    }}
+                }});
+                
+                rows.sort((a, b) => {{
+                    const aVal = a.cells[columnIndex].textContent.trim();
+                    const bVal = b.cells[columnIndex].textContent.trim();
+                    
+                    // Handle numeric values
+                    const aNum = parseFloat(aVal.replace(/[^-0-9.]/g, ''));
+                    const bNum = parseFloat(bVal.replace(/[^-0-9.]/g, ''));
+                    
+                    if (!isNaN(aNum) && !isNaN(bNum)) {{
+                        return direction === 'asc' ? aNum - bNum : bNum - aNum;
+                    }}
+                    
+                    // Handle text values
+                    return direction === 'asc' ? 
+                        aVal.localeCompare(bVal) : 
+                        bVal.localeCompare(aVal);
+                }});
+                
+                // Reappend sorted rows
+                rows.forEach(row => table.appendChild(row));
+            }}
+        </script>
     </head>
     <body>
         <div class="ib-container">
@@ -293,6 +353,7 @@ def create_ib_style_html_table(df, title, output_file=None):
     """
 
     # Add headers with appropriate icons and formatting
+    column_index = 0
     for col in df.columns:
         header_name = col
         if col == 'Ticker':
@@ -307,8 +368,11 @@ def create_ib_style_html_table(df, title, output_file=None):
             header_name = 'MA200%'
         elif col in ['24h', '7d', '1m', '3m', '1y']:
             header_name = col.upper()
+        elif col in ['24h_RS', '7d_RS', '1m_RS', '3m_RS', '1y_RS']:
+            header_name = col.upper().replace('_', ' ')
 
-        html_content += f'<th>{header_name}</th>'
+        html_content += f'<th onclick="sortTable({column_index}, \'{col}\')">{header_name}</th>'
+        column_index += 1
 
     html_content += """
                         </tr>
@@ -332,7 +396,7 @@ def create_ib_style_html_table(df, title, output_file=None):
                 css_class = "ticker-cell"
             elif col == 'Price_USD':
                 css_class = "price-cell"
-            elif col in ['24h', '7d', '1m', '3m', '1y', '%FromMA50', '%FromMA200']:
+            elif col in ['24h', '7d', '1m', '3m', '1y', '%FromMA50', '%FromMA200', '24h_RS', '7d_RS', '1m_RS', '3m_RS', '1y_RS']:
                 if '+' in str(value):
                     css_class = "positive"
                 elif '-' in str(value) and value != '--':
@@ -385,12 +449,14 @@ def create_ib_style_dash_app(df, title="Portfolio Management System"):
             display_name = 'MA200%'
         elif col in ['24h', '7d', '1m', '3m', '1y']:
             display_name = col.upper()
+        elif col in ['24h_RS', '7d_RS', '1m_RS', '3m_RS', '1y_RS']:
+            display_name = col.upper().replace('_', ' ')
 
         col_config = {
             "name": display_name,
             "id": col,
             "type": "numeric" if col not in ['Ticker', 'Asset Class', 'Currency'] and 'Alert' not in col else "text",
-            "format": {"specifier": ".2f"} if col in ['24h', '7d', '1m', '3m', '1y', '%FromMA50', '%FromMA200', 'Z-score'] else {}
+            "format": {"specifier": ".2f"} if col in ['24h', '7d', '1m', '3m', '1y', '%FromMA50', '%FromMA200', 'Z-score', '24h_RS', '7d_RS', '1m_RS', '3m_RS', '1y_RS'] else {}
         }
 
         if col == 'Price_USD':
@@ -409,8 +475,8 @@ def create_ib_style_dash_app(df, title="Portfolio Management System"):
     # Professional conditional styling
     style_data_conditional = []
 
-    # Style percentage columns with professional colors
-    percentage_cols = ['24h', '7d', '1m', '3m', '1y', '%FromMA50', '%FromMA200']
+    # Style percentage columns with professional colors (including RS columns)
+    percentage_cols = ['24h', '7d', '1m', '3m', '1y', '%FromMA50', '%FromMA200', '24h_RS', '7d_RS', '1m_RS', '3m_RS', '1y_RS']
     for col in percentage_cols:
         if col in df.columns:
             style_data_conditional.extend([
