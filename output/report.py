@@ -1,3 +1,4 @@
+
 # output/report.py
 import pandas as pd
 import plotly.graph_objects as go
@@ -154,19 +155,19 @@ def create_ib_style_html_table(df, title, output_file=None):
             .ib-table-container {{
                 overflow: auto;
                 background: white;
+                position: relative;
+                max-height: 80vh;
             }}
             .ib-table {{
                 width: 100%;
-                border-collapse: collapse;
+                border-collapse: separate;
+                border-spacing: 0;
                 font-family: 'Roboto Mono', monospace;
                 font-size: 12px;
                 background: white;
             }}
             .ib-table thead {{
                 background: #e3f2fd;
-                position: sticky;
-                top: 0;
-                z-index: 100;
             }}
             .ib-table th {{
                 padding: 8px 12px;
@@ -182,6 +183,10 @@ def create_ib_style_html_table(df, title, output_file=None):
                 cursor: pointer;
                 user-select: none;
                 position: relative;
+                background: #e3f2fd;
+                position: sticky;
+                top: 0;
+                z-index: 10;
             }}
             .ib-table th:hover {{
                 background: #bbdefb;
@@ -198,6 +203,10 @@ def create_ib_style_html_table(df, title, output_file=None):
             .ib-table th:first-child {{
                 text-align: left;
                 background: #bbdefb;
+                position: sticky;
+                left: 0;
+                z-index: 11;
+                border-right: 2px solid #0d47a1;
             }}
             .ib-table th:first-child:hover {{
                 background: #90caf9;
@@ -215,6 +224,13 @@ def create_ib_style_html_table(df, title, output_file=None):
                 font-weight: 600;
                 background: #fafafa;
                 border-right: 2px solid #ccc;
+                position: sticky;
+                left: 0;
+                z-index: 5;
+                box-shadow: 2px 0 5px rgba(0,0,0,0.1);
+            }}
+            .ib-table tbody tr:hover td:first-child {{
+                background-color: #e3f2fd;
             }}
             .ib-table tbody tr:hover {{
                 background-color: #f0f8ff;
@@ -224,6 +240,12 @@ def create_ib_style_html_table(df, title, output_file=None):
             }}
             .ib-table tbody tr:nth-child(even):hover {{
                 background-color: #f0f8ff;
+            }}
+            .ib-table tbody tr:nth-child(even) td:first-child {{
+                background-color: #f5f5f5;
+            }}
+            .ib-table tbody tr:nth-child(even):hover td:first-child {{
+                background-color: #e3f2fd;
             }}
             .positive {{
                 color: #00C851 !important;
@@ -274,6 +296,9 @@ def create_ib_style_html_table(df, title, output_file=None):
                 .ib-stats {{
                     gap: 15px;
                 }}
+                .ib-table-container {{
+                    max-height: 70vh;
+                }}
             }}
         </style>
         <script>
@@ -291,9 +316,16 @@ def create_ib_style_html_table(df, title, output_file=None):
                 document.querySelectorAll('.ib-table th').forEach((th, index) => {{
                     if (index === columnIndex) {{
                         th.style.background = direction === 'asc' ? '#90caf9' : '#64b5f6';
-                        th.querySelector('::after') || (th.innerHTML += direction === 'asc' ? ' ↑' : ' ↓');
+                        // Remove existing arrows
+                        th.innerHTML = th.innerHTML.replace(/ [↑↓]/g, '');
+                        th.innerHTML += direction === 'asc' ? ' ↑' : ' ↓';
                     }} else {{
-                        th.style.background = index === 0 ? '#bbdefb' : '#e3f2fd';
+                        th.innerHTML = th.innerHTML.replace(/ [↑↓]/g, '');
+                        if (index === 0) {{
+                            th.style.background = '#bbdefb';
+                        }} else {{
+                            th.style.background = '#e3f2fd';
+                        }}
                     }}
                 }});
                 
@@ -594,7 +626,7 @@ def create_ib_style_dash_app(df, title="Portfolio Management System"):
             'color': '#666'
         }),
 
-        # DataTable
+        # DataTable with fixed first column
         dash_table.DataTable(
             id='ib-table',
             columns=columns,
@@ -605,10 +637,12 @@ def create_ib_style_dash_app(df, title="Portfolio Management System"):
             page_action="native",
             page_current=0,
             page_size=25,
+            fixed_columns={'headers': True, 'data': 1},
             style_table={
                 'overflowX': 'auto',
                 'backgroundColor': 'white',
-                'fontFamily': 'Roboto Mono, monospace'
+                'fontFamily': 'Roboto Mono, monospace',
+                'maxHeight': '80vh'
             },
             style_header={
                 'backgroundColor': '#e3f2fd',
@@ -620,8 +654,7 @@ def create_ib_style_dash_app(df, title="Portfolio Management System"):
                 'letterSpacing': '0.5px',
                 'borderRight': '1px solid #ccc',
                 'borderBottom': '2px solid #0d47a1',
-                'position': 'sticky',
-                'top': '0'
+                'position': 'sticky'
             },
             style_cell={
                 'textAlign': 'right',
@@ -638,7 +671,7 @@ def create_ib_style_dash_app(df, title="Portfolio Management System"):
                     'textAlign': 'left',
                     'fontWeight': '600',
                     'backgroundColor': '#fafafa',
-                    'borderRight': '2px solid #ccc'
+                    'borderRight': '2px solid #0d47a1'
                 }
             ],
             style_data={
