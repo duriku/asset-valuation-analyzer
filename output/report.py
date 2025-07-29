@@ -33,14 +33,66 @@ def get_color_for_rsi(rsi):
     else:
         return '#00C851'  # Oversold - green
 
-def create_ib_style_html_table(df, title, output_file=None):
-    """Create an Interactive Brokers-style professional trading table"""
+def filter_dataframe(df, symbol_filter=None, type_filter=None):
+    """Filter DataFrame by symbol and type"""
+    if df.empty:
+        return df
+
+    filtered_df = df.copy()
+
+    # Filter by symbol
+    if symbol_filter:
+        if 'Ticker' in filtered_df.columns:
+            mask = filtered_df['Ticker'].str.contains(symbol_filter, case=False, na=False)
+            filtered_df = filtered_df[mask]
+        elif filtered_df.index.name == 'Ticker':
+            mask = filtered_df.index.str.contains(symbol_filter, case=False, na=False)
+            filtered_df = filtered_df[mask]
+
+    # Filter by type
+    if type_filter:
+        if 'Asset Class' in filtered_df.columns:
+            mask = filtered_df['Asset Class'].str.contains(type_filter, case=False, na=False)
+            filtered_df = filtered_df[mask]
+        elif 'Type' in filtered_df.columns:
+            mask = filtered_df['Type'].str.contains(type_filter, case=False, na=False)
+            filtered_df = filtered_df[mask]
+
+    return filtered_df
+
+
+def create_ib_style_html_table(df, title, output_file=None, symbol_filter=None, type_filter=None):
+    """Create an Interactive Brokers-style professional trading table with interactive filters"""
+
+    # Store original data for client-side filtering
+    original_data = []
+    for _, row in df.iterrows():
+        row_dict = {}
+        for col in df.columns:
+            value = row[col]
+            if pd.isna(value):
+                row_dict[col] = ''
+            else:
+                row_dict[col] = str(value)
+        original_data.append(row_dict)
+
+    # Apply server-side filters if provided
+    filtered_df = filter_dataframe(df, symbol_filter, type_filter)
+
+    # Add filter info to title if filters are applied
+    if symbol_filter or type_filter:
+        filter_parts = []
+        if symbol_filter:
+            filter_parts.append(f"Symbol: {symbol_filter}")
+        if type_filter:
+            filter_parts.append(f"Type: {type_filter}")
+        title += f" (Filtered: {', '.join(filter_parts)})"
 
     # Prepare data with colors
     table_data = []
-    for _, row in df.iterrows():
+    for _, row in filtered_df.iterrows():
         row_data = {}
-        for col in df.columns:
+        for col in filtered_df.columns:
             value = row[col]
             if pd.isna(value):
                 row_data[col] = {'value': '--', 'color': '#666666', 'bg': '#f8f9fa'}
@@ -123,6 +175,70 @@ def create_ib_style_html_table(df, title, output_file=None):
                 margin: 0;
                 font-family: 'Roboto', sans-serif;
             }}
+            .filter-panel {{
+                background: #e3f2fd;
+                padding: 15px 20px;
+                border-bottom: 2px solid #1565c0;
+                display: flex;
+                gap: 20px;
+                align-items: center;
+                flex-wrap: wrap;
+            }}
+            .filter-group {{
+                display: flex;
+                align-items: center;
+                gap: 8px;
+            }}
+            .filter-label {{
+                font-weight: 600;
+                color: #0d47a1;
+                font-size: 12px;
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
+            }}
+            .filter-input {{
+                padding: 6px 12px;
+                border: 1px solid #1565c0;
+                border-radius: 4px;
+                font-size: 12px;
+                font-family: 'Roboto Mono', monospace;
+                background: white;
+                min-width: 120px;
+            }}
+            .filter-input:focus {{
+                outline: none;
+                border-color: #0d47a1;
+                box-shadow: 0 0 0 2px rgba(13, 71, 161, 0.2);
+            }}
+            .filter-button {{
+                padding: 6px 16px;
+                background: #0d47a1;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                font-size: 12px;
+                font-weight: 600;
+                cursor: pointer;
+                transition: background 0.2s;
+            }}
+            .filter-button:hover {{
+                background: #1565c0;
+            }}
+            .clear-button {{
+                background: #666;
+                padding: 6px 12px;
+            }}
+            .clear-button:hover {{
+                background: #888;
+            }}
+            .filter-info {{
+                background: #fff3e0;
+                padding: 8px 20px;
+                border-bottom: 1px solid #ffb74d;
+                font-size: 12px;
+                color: #ef6c00;
+                display: none;
+            }}
             .ib-toolbar {{
                 background: #f8f9fa;
                 padding: 10px 20px;
@@ -156,7 +272,7 @@ def create_ib_style_html_table(df, title, output_file=None):
                 overflow: auto;
                 background: white;
                 position: relative;
-                max-height: 80vh;
+                max-height: 70vh;
             }}
             .ib-table {{
                 width: 100%;
@@ -285,7 +401,21 @@ def create_ib_style_html_table(df, title, output_file=None):
                 color: #666;
                 text-align: center;
             }}
+            .hidden-row {{
+                display: none !important;
+            }}
             @media (max-width: 768px) {{
+                .filter-panel {{
+                    flex-direction: column;
+                    gap: 10px;
+                    align-items: stretch;
+                }}
+                .filter-group {{
+                    justify-content: space-between;
+                }}
+                .filter-input {{
+                    min-width: 100px;
+                }}
                 .ib-table {{
                     font-size: 10px;
                 }}
@@ -297,16 +427,94 @@ def create_ib_style_html_table(df, title, output_file=None):
                     gap: 15px;
                 }}
                 .ib-table-container {{
-                    max-height: 70vh;
+                    max-height: 60vh;
                 }}
             }}
         </style>
         <script>
             let sortDirection = {{}};
+            let originalData = {json.dumps(original_data)};
+            let allRows = [];
+            
+            function initializeFilters() {{
+                // Store all table rows for filtering
+                const tbody = document.querySelector('.ib-table tbody');
+                allRows = Array.from(tbody.querySelectorAll('tr'));
+                
+                // Set initial filter values if provided
+                const symbolInput = document.getElementById('symbol-filter');
+                const typeInput = document.getElementById('type-filter');
+                
+                if ('{symbol_filter or ""}') {{
+                    symbolInput.value = '{symbol_filter or ""}';
+                }}
+                if ('{type_filter or ""}') {{
+                    typeInput.value = '{type_filter or ""}';
+                }}
+                
+                // Add event listeners
+                symbolInput.addEventListener('input', applyFilters);
+                typeInput.addEventListener('input', applyFilters);
+                
+                // Apply initial filters
+                applyFilters();
+            }}
+            
+            function applyFilters() {{
+                const symbolFilter = document.getElementById('symbol-filter').value.toLowerCase();
+                const typeFilter = document.getElementById('type-filter').value.toLowerCase();
+                const filterInfo = document.querySelector('.filter-info');
+                
+                let visibleCount = 0;
+                
+                allRows.forEach((row, index) => {{
+                    const rowData = originalData[index];
+                    let showRow = true;
+                    
+                    // Apply symbol filter
+                    if (symbolFilter && rowData.Ticker) {{
+                        showRow = showRow && rowData.Ticker.toLowerCase().includes(symbolFilter);
+                    }}
+                    
+                    // Apply type filter
+                    if (typeFilter) {{
+                        const assetClass = rowData['Asset Class'] || '';
+                        showRow = showRow && assetClass.toLowerCase().includes(typeFilter);
+                    }}
+                    
+                    if (showRow) {{
+                        row.classList.remove('hidden-row');
+                        visibleCount++;
+                    }} else {{
+                        row.classList.add('hidden-row');
+                    }}
+                }});
+                
+                // Update stats
+                document.querySelector('.ib-stat-number').textContent = visibleCount;
+                
+                // Show/hide filter info
+                if (symbolFilter || typeFilter) {{
+                    const filters = [];
+                    if (symbolFilter) filters.push(`Symbol contains: "${{symbolFilter}}"`);
+                    if (typeFilter) filters.push(`Type contains: "${{typeFilter}}"`);
+                    
+                    filterInfo.innerHTML = `<strong>Active Filters:</strong> ${{filters.join(', ')}} | Showing ${{visibleCount}} of ${{originalData.length}} assets`;
+                    filterInfo.style.display = 'block';
+                }} else {{
+                    filterInfo.style.display = 'none';
+                }}
+            }}
+            
+            function clearFilters() {{
+                document.getElementById('symbol-filter').value = '';
+                document.getElementById('type-filter').value = '';
+                applyFilters();
+            }}
             
             function sortTable(columnIndex, columnName) {{
                 const table = document.querySelector('.ib-table tbody');
-                const rows = Array.from(table.querySelectorAll('tr'));
+                const visibleRows = Array.from(table.querySelectorAll('tr:not(.hidden-row)'));
                 
                 // Toggle sort direction
                 sortDirection[columnName] = sortDirection[columnName] === 'asc' ? 'desc' : 'asc';
@@ -316,7 +524,6 @@ def create_ib_style_html_table(df, title, output_file=None):
                 document.querySelectorAll('.ib-table th').forEach((th, index) => {{
                     if (index === columnIndex) {{
                         th.style.background = direction === 'asc' ? '#90caf9' : '#64b5f6';
-                        // Remove existing arrows
                         th.innerHTML = th.innerHTML.replace(/ [↑↓]/g, '');
                         th.innerHTML += direction === 'asc' ? ' ↑' : ' ↓';
                     }} else {{
@@ -329,11 +536,10 @@ def create_ib_style_html_table(df, title, output_file=None):
                     }}
                 }});
                 
-                rows.sort((a, b) => {{
+                visibleRows.sort((a, b) => {{
                     const aVal = a.cells[columnIndex].textContent.trim();
                     const bVal = b.cells[columnIndex].textContent.trim();
                     
-                    // Handle numeric values
                     const aNum = parseFloat(aVal.replace(/[^-0-9.]/g, ''));
                     const bNum = parseFloat(bVal.replace(/[^-0-9.]/g, ''));
                     
@@ -341,15 +547,20 @@ def create_ib_style_html_table(df, title, output_file=None):
                         return direction === 'asc' ? aNum - bNum : bNum - aNum;
                     }}
                     
-                    // Handle text values
                     return direction === 'asc' ? 
                         aVal.localeCompare(bVal) : 
                         bVal.localeCompare(aVal);
                 }});
                 
-                // Reappend sorted rows
-                rows.forEach(row => table.appendChild(row));
+                // Reappend sorted visible rows
+                const hiddenRows = Array.from(table.querySelectorAll('tr.hidden-row'));
+                table.innerHTML = '';
+                visibleRows.forEach(row => table.appendChild(row));
+                hiddenRows.forEach(row => table.appendChild(row));
             }}
+            
+            // Initialize when page loads
+            document.addEventListener('DOMContentLoaded', initializeFilters);
         </script>
     </head>
     <body>
@@ -358,10 +569,24 @@ def create_ib_style_html_table(df, title, output_file=None):
                 <h1 class="ib-title">{title}</h1>
             </div>
             
+            <div class="filter-panel">
+                <div class="filter-group">
+                    <label class="filter-label" for="symbol-filter">Symbol:</label>
+                    <input type="text" id="symbol-filter" class="filter-input" placeholder="Filter by symbol...">
+                </div>
+                <div class="filter-group">
+                    <label class="filter-label" for="type-filter">Type:</label>
+                    <input type="text" id="type-filter" class="filter-input" placeholder="Filter by type...">
+                </div>
+                <button class="filter-button clear-button" onclick="clearFilters()">Clear Filters</button>
+            </div>
+            
+            <div class="filter-info"></div>
+            
             <div class="ib-toolbar">
                 <div class="ib-stats">
                     <div class="ib-stat">
-                        <div class="ib-stat-number">{len(df)}</div>
+                        <div class="ib-stat-number">{len(filtered_df)}</div>
                         <div class="ib-stat-label">Positions</div>
                     </div>
                     <div class="ib-stat">
@@ -369,7 +594,7 @@ def create_ib_style_html_table(df, title, output_file=None):
                         <div class="ib-stat-label">Last Update</div>
                     </div>
                     <div class="ib-stat">
-                        <div class="ib-stat-number">{len([col for col in df.columns if 'Alert' in col])}</div>
+                        <div class="ib-stat-number">{len([col for col in filtered_df.columns if 'Alert' in col])}</div>
                         <div class="ib-stat-label">Alert Types</div>
                     </div>
                 </div>
@@ -386,7 +611,7 @@ def create_ib_style_html_table(df, title, output_file=None):
 
     # Add headers with appropriate icons and formatting
     column_index = 0
-    for col in df.columns:
+    for col in filtered_df.columns:
         header_name = col
         if col == 'Ticker':
             header_name = 'Symbol'
@@ -415,7 +640,7 @@ def create_ib_style_html_table(df, title, output_file=None):
     # Add rows with professional styling
     for row_data in table_data:
         html_content += '<tr>'
-        for col in df.columns:
+        for col in filtered_df.columns:
             cell_data = row_data[col]
             value = cell_data['value']
             color = cell_data['color']
@@ -458,7 +683,7 @@ def create_ib_style_html_table(df, title, output_file=None):
     if output_file:
         with open(output_file, 'w', encoding='utf-8') as f:
             f.write(html_content)
-        print(f"Professional trading-style HTML report generated: {output_file}")
+        print(f"Professional trading-style HTML report with interactive filters generated: {output_file}")
 
     return html_content
 
@@ -706,12 +931,14 @@ def create_ib_style_dash_app(df, title="Portfolio Management System"):
     return app
 
 # Updated main functions
-def print_asset_table_modern(asset_df, output_file="professional_asset_report.html"):
-    """Generate professional trading-style HTML report"""
+def print_asset_table_modern(asset_df, output_file="professional_asset_report.html", symbol_filter=None, type_filter=None):
+    """Generate professional trading-style HTML report with optional filters"""
     return create_ib_style_html_table(
         asset_df,
         "Portfolio Management System - Asset Analysis",
-        output_file
+        output_file,
+        symbol_filter,
+        type_filter
     )
 
 def create_interactive_dashboard(asset_df, trades=None, port=8050):
