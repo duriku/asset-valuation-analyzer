@@ -6,6 +6,48 @@ from plotly.subplots import make_subplots
 import dash
 from dash import html, dcc, dash_table, Input, Output, callback
 import json
+import yfinance as yf
+
+def get_asset_name(symbol):
+    """Get the full name of an asset from Yahoo Finance"""
+    try:
+        ticker = yf.Ticker(symbol)
+        info = ticker.info
+        return info.get('longName', info.get('shortName', symbol))
+    except:
+        return symbol
+
+def add_names_to_dataframe(df):
+    """Add Name column to the dataframe"""
+    if 'Name' not in df.columns:
+        df_with_names = df.copy()
+
+        # Get the symbol column (could be 'Ticker' or index)
+        if 'Ticker' in df.columns:
+            symbols = df['Ticker'].tolist()
+        else:
+            symbols = df.index.tolist()
+
+        # Fetch names for all symbols
+        names = []
+        for symbol in symbols:
+            name = get_asset_name(symbol)
+            names.append(name)
+
+        # Insert Name column right after Ticker/Symbol
+        if 'Ticker' in df.columns:
+            ticker_index = df.columns.get_loc('Ticker')
+            # Create new dataframe with Name column inserted
+            cols = df.columns.tolist()
+            cols.insert(ticker_index + 1, 'Name')
+            df_with_names = df_with_names.reindex(columns=cols)
+            df_with_names['Name'] = names
+        else:
+            df_with_names.insert(0, 'Name', names)
+
+        return df_with_names
+
+    return df
 
 def get_color_for_percentage(value):
     """Return color based on percentage value - professional trading colors"""
@@ -33,8 +75,8 @@ def get_color_for_rsi(rsi):
     else:
         return '#00C851'  # Oversold - green
 
-def filter_dataframe(df, symbol_filter=None, type_filter=None):
-    """Filter DataFrame by symbol and type"""
+def filter_dataframe(df, symbol_filter=None, type_filter=None, name_filter=None):
+    """Filter DataFrame by symbol, type, and name"""
     if df.empty:
         return df
 
@@ -49,6 +91,12 @@ def filter_dataframe(df, symbol_filter=None, type_filter=None):
             mask = filtered_df.index.str.contains(symbol_filter, case=False, na=False)
             filtered_df = filtered_df[mask]
 
+    # Filter by name
+    if name_filter:
+        if 'Name' in filtered_df.columns:
+            mask = filtered_df['Name'].str.contains(name_filter, case=False, na=False)
+            filtered_df = filtered_df[mask]
+
     # Filter by type
     if type_filter:
         if 'Asset Class' in filtered_df.columns:
@@ -60,9 +108,11 @@ def filter_dataframe(df, symbol_filter=None, type_filter=None):
 
     return filtered_df
 
-
-def create_ib_style_html_table(df, title, output_file=None, symbol_filter=None, type_filter=None):
+def create_ib_style_html_table(df, title, output_file=None, symbol_filter=None, type_filter=None, name_filter=None):
     """Create an Interactive Brokers-style professional trading table with interactive filters"""
+
+    # Add names to dataframe
+    df = add_names_to_dataframe(df)
 
     # Store original data for client-side filtering
     original_data = []
@@ -77,15 +127,18 @@ def create_ib_style_html_table(df, title, output_file=None, symbol_filter=None, 
         original_data.append(row_dict)
 
     # Apply server-side filters if provided
-    filtered_df = filter_dataframe(df, symbol_filter, type_filter)
+    filtered_df = filter_dataframe(df, symbol_filter, type_filter, name_filter)
 
     # Add filter info to title if filters are applied
-    if symbol_filter or type_filter:
-        filter_parts = []
-        if symbol_filter:
-            filter_parts.append(f"Symbol: {symbol_filter}")
-        if type_filter:
-            filter_parts.append(f"Type: {type_filter}")
+    filter_parts = []
+    if symbol_filter:
+        filter_parts.append(f"Symbol: {symbol_filter}")
+    if name_filter:
+        filter_parts.append(f"Name: {name_filter}")
+    if type_filter:
+        filter_parts.append(f"Type: {type_filter}")
+
+    if filter_parts:
         title += f" (Filtered: {', '.join(filter_parts)})"
 
     # Prepare data with colors
@@ -129,6 +182,12 @@ def create_ib_style_html_table(df, title, output_file=None, symbol_filter=None, 
                     'value': 'ALERT' if value else '',
                     'color': '#FFFFFF' if value else '#666666',
                     'bg': '#FF4444' if value else '#f8f9fa'
+                }
+            elif col == 'Name':
+                row_data[col] = {
+                    'value': str(value) if pd.notna(value) else '--',
+                    'color': '#333333',
+                    'bg': '#ffffff'
                 }
             else:
                 row_data[col] = {
@@ -316,7 +375,8 @@ def create_ib_style_html_table(df, title, output_file=None, symbol_filter=None, 
                 opacity: 0.5;
                 font-size: 10px;
             }}
-            .ib-table th:first-child {{
+            .ib-table th:first-child,
+            .ib-table th:nth-child(2) {{
                 text-align: left;
                 background: #bbdefb;
                 position: sticky;
@@ -324,7 +384,11 @@ def create_ib_style_html_table(df, title, output_file=None, symbol_filter=None, 
                 z-index: 11;
                 border-right: 2px solid #0d47a1;
             }}
-            .ib-table th:first-child:hover {{
+            .ib-table th:nth-child(2) {{
+                left: 80px; /* Adjust based on first column width */
+            }}
+            .ib-table th:first-child:hover,
+            .ib-table th:nth-child(2):hover {{
                 background: #90caf9;
             }}
             .ib-table td {{
@@ -335,7 +399,8 @@ def create_ib_style_html_table(df, title, output_file=None, symbol_filter=None, 
                 font-weight: 400;
                 white-space: nowrap;
             }}
-            .ib-table td:first-child {{
+            .ib-table td:first-child,
+            .ib-table td:nth-child(2) {{
                 text-align: left;
                 font-weight: 600;
                 background: #fafafa;
@@ -345,7 +410,16 @@ def create_ib_style_html_table(df, title, output_file=None, symbol_filter=None, 
                 z-index: 5;
                 box-shadow: 2px 0 5px rgba(0,0,0,0.1);
             }}
-            .ib-table tbody tr:hover td:first-child {{
+            .ib-table td:nth-child(2) {{
+                left: 80px; /* Adjust based on first column width */
+                font-weight: 400;
+                font-size: 11px;
+                max-width: 200px;
+                overflow: hidden;
+                text-overflow: ellipsis;
+            }}
+            .ib-table tbody tr:hover td:first-child,
+            .ib-table tbody tr:hover td:nth-child(2) {{
                 background-color: #e3f2fd;
             }}
             .ib-table tbody tr:hover {{
@@ -357,10 +431,12 @@ def create_ib_style_html_table(df, title, output_file=None, symbol_filter=None, 
             .ib-table tbody tr:nth-child(even):hover {{
                 background-color: #f0f8ff;
             }}
-            .ib-table tbody tr:nth-child(even) td:first-child {{
+            .ib-table tbody tr:nth-child(even) td:first-child,
+            .ib-table tbody tr:nth-child(even) td:nth-child(2) {{
                 background-color: #f5f5f5;
             }}
-            .ib-table tbody tr:nth-child(even):hover td:first-child {{
+            .ib-table tbody tr:nth-child(even):hover td:first-child,
+            .ib-table tbody tr:nth-child(even):hover td:nth-child(2) {{
                 background-color: #e3f2fd;
             }}
             .positive {{
@@ -392,6 +468,11 @@ def create_ib_style_html_table(df, title, output_file=None, symbol_filter=None, 
             .ticker-cell {{
                 color: #0d47a1;
                 font-weight: 600;
+            }}
+            .name-cell {{
+                color: #333333;
+                font-weight: 400;
+                font-style: italic;
             }}
             .footer {{
                 background: #f8f9fa;
@@ -429,6 +510,10 @@ def create_ib_style_html_table(df, title, output_file=None, symbol_filter=None, 
                 .ib-table-container {{
                     max-height: 60vh;
                 }}
+                .ib-table td:nth-child(2) {{
+                    left: 60px;
+                    max-width: 150px;
+                }}
             }}
         </style>
         <script>
@@ -443,10 +528,14 @@ def create_ib_style_html_table(df, title, output_file=None, symbol_filter=None, 
                 
                 // Set initial filter values if provided
                 const symbolInput = document.getElementById('symbol-filter');
+                const nameInput = document.getElementById('name-filter');
                 const typeInput = document.getElementById('type-filter');
                 
                 if ('{symbol_filter or ""}') {{
                     symbolInput.value = '{symbol_filter or ""}';
+                }}
+                if ('{name_filter or ""}') {{
+                    nameInput.value = '{name_filter or ""}';
                 }}
                 if ('{type_filter or ""}') {{
                     typeInput.value = '{type_filter or ""}';
@@ -454,6 +543,7 @@ def create_ib_style_html_table(df, title, output_file=None, symbol_filter=None, 
                 
                 // Add event listeners
                 symbolInput.addEventListener('input', applyFilters);
+                nameInput.addEventListener('input', applyFilters);
                 typeInput.addEventListener('input', applyFilters);
                 
                 // Apply initial filters
@@ -462,6 +552,7 @@ def create_ib_style_html_table(df, title, output_file=None, symbol_filter=None, 
             
             function applyFilters() {{
                 const symbolFilter = document.getElementById('symbol-filter').value.toLowerCase();
+                const nameFilter = document.getElementById('name-filter').value.toLowerCase();
                 const typeFilter = document.getElementById('type-filter').value.toLowerCase();
                 const filterInfo = document.querySelector('.filter-info');
                 
@@ -474,6 +565,11 @@ def create_ib_style_html_table(df, title, output_file=None, symbol_filter=None, 
                     // Apply symbol filter
                     if (symbolFilter && rowData.Ticker) {{
                         showRow = showRow && rowData.Ticker.toLowerCase().includes(symbolFilter);
+                    }}
+                    
+                    // Apply name filter
+                    if (nameFilter && rowData.Name) {{
+                        showRow = showRow && rowData.Name.toLowerCase().includes(nameFilter);
                     }}
                     
                     // Apply type filter
@@ -494,9 +590,10 @@ def create_ib_style_html_table(df, title, output_file=None, symbol_filter=None, 
                 document.querySelector('.ib-stat-number').textContent = visibleCount;
                 
                 // Show/hide filter info
-                if (symbolFilter || typeFilter) {{
+                if (symbolFilter || nameFilter || typeFilter) {{
                     const filters = [];
                     if (symbolFilter) filters.push(`Symbol contains: "${{symbolFilter}}"`);
+                    if (nameFilter) filters.push(`Name contains: "${{nameFilter}}"`);
                     if (typeFilter) filters.push(`Type contains: "${{typeFilter}}"`);
                     
                     filterInfo.innerHTML = `<strong>Active Filters:</strong> ${{filters.join(', ')}} | Showing ${{visibleCount}} of ${{originalData.length}} assets`;
@@ -508,6 +605,7 @@ def create_ib_style_html_table(df, title, output_file=None, symbol_filter=None, 
             
             function clearFilters() {{
                 document.getElementById('symbol-filter').value = '';
+                document.getElementById('name-filter').value = '';
                 document.getElementById('type-filter').value = '';
                 applyFilters();
             }}
@@ -528,7 +626,7 @@ def create_ib_style_html_table(df, title, output_file=None, symbol_filter=None, 
                         th.innerHTML += direction === 'asc' ? ' ↑' : ' ↓';
                     }} else {{
                         th.innerHTML = th.innerHTML.replace(/ [↑↓]/g, '');
-                        if (index === 0) {{
+                        if (index <= 1) {{
                             th.style.background = '#bbdefb';
                         }} else {{
                             th.style.background = '#e3f2fd';
@@ -575,6 +673,10 @@ def create_ib_style_html_table(df, title, output_file=None, symbol_filter=None, 
                     <input type="text" id="symbol-filter" class="filter-input" placeholder="Filter by symbol...">
                 </div>
                 <div class="filter-group">
+                    <label class="filter-label" for="name-filter">Name:</label>
+                    <input type="text" id="name-filter" class="filter-input" placeholder="Filter by name...">
+                </div>
+                <div class="filter-group">
                     <label class="filter-label" for="type-filter">Type:</label>
                     <input type="text" id="type-filter" class="filter-input" placeholder="Filter by type...">
                 </div>
@@ -615,6 +717,8 @@ def create_ib_style_html_table(df, title, output_file=None, symbol_filter=None, 
         header_name = col
         if col == 'Ticker':
             header_name = 'Symbol'
+        elif col == 'Name':
+            header_name = 'Name'
         elif col == 'Price_USD':
             header_name = 'Last Price'
         elif col == 'Asset Class':
@@ -651,6 +755,8 @@ def create_ib_style_html_table(df, title, output_file=None, symbol_filter=None, 
                 css_class = "alert-cell"
             elif col == 'Ticker':
                 css_class = "ticker-cell"
+            elif col == 'Name':
+                css_class = "name-cell"
             elif col == 'Price_USD':
                 css_class = "price-cell"
             elif col in ['24h', '7d', '1m', '3m', '1y', '%FromMA50', '%FromMA200', '24h_RS', '7d_RS', '1m_RS', '3m_RS', '1y_RS']:
@@ -690,12 +796,17 @@ def create_ib_style_html_table(df, title, output_file=None, symbol_filter=None, 
 def create_ib_style_dash_app(df, title="Portfolio Management System"):
     """Create an Interactive Brokers-style Dash app"""
 
+    # Add names to dataframe
+    df = add_names_to_dataframe(df)
+
     # Prepare columns for Dash DataTable
     columns = []
     for col in df.columns:
         display_name = col
         if col == 'Ticker':
             display_name = 'Symbol'
+        elif col == 'Name':
+            display_name = 'Name'
         elif col == 'Price_USD':
             display_name = 'Last Price'
         elif col == 'Asset Class':
@@ -712,7 +823,7 @@ def create_ib_style_dash_app(df, title="Portfolio Management System"):
         col_config = {
             "name": display_name,
             "id": col,
-            "type": "numeric" if col not in ['Ticker', 'Asset Class', 'Currency'] and 'Alert' not in col else "text",
+            "type": "text" if col in ['Ticker', 'Name', 'Asset Class', 'Currency'] or 'Alert' in col else "numeric",
             "format": {"specifier": ".2f"} if col in ['24h', '7d', '1m', '3m', '1y', '%FromMA50', '%FromMA200', 'Z-score', '24h_RS', '7d_RS', '1m_RS', '3m_RS', '1y_RS'] else {}
         }
 
@@ -801,6 +912,15 @@ def create_ib_style_dash_app(df, title="Portfolio Management System"):
             'fontWeight': '600'
         })
 
+    # Style name column
+    if 'Name' in df.columns:
+        style_data_conditional.append({
+            'if': {'column_id': 'Name'},
+            'color': '#333333',
+            'fontWeight': '400',
+            'fontStyle': 'italic'
+        })
+
     app.layout = html.Div([
         # Header
         html.Div([
@@ -862,7 +982,7 @@ def create_ib_style_dash_app(df, title="Portfolio Management System"):
             page_action="native",
             page_current=0,
             page_size=25,
-            fixed_columns={'headers': True, 'data': 1},
+            fixed_columns={'headers': True, 'data': 2},  # Fixed both Symbol and Name columns
             style_table={
                 'overflowX': 'auto',
                 'backgroundColor': 'white',
@@ -897,6 +1017,17 @@ def create_ib_style_dash_app(df, title="Portfolio Management System"):
                     'fontWeight': '600',
                     'backgroundColor': '#fafafa',
                     'borderRight': '2px solid #0d47a1'
+                },
+                {
+                    'if': {'column_id': 'Name'},
+                    'textAlign': 'left',
+                    'fontWeight': '400',
+                    'fontStyle': 'italic',
+                    'backgroundColor': '#fafafa',
+                    'borderRight': '2px solid #0d47a1',
+                    'maxWidth': '200px',
+                    'overflow': 'hidden',
+                    'textOverflow': 'ellipsis'
                 }
             ],
             style_data={
@@ -931,14 +1062,15 @@ def create_ib_style_dash_app(df, title="Portfolio Management System"):
     return app
 
 # Updated main functions
-def print_asset_table_modern(asset_df, output_file="professional_asset_report.html", symbol_filter=None, type_filter=None):
+def print_asset_table_modern(asset_df, output_file="professional_asset_report.html", symbol_filter=None, type_filter=None, name_filter=None):
     """Generate professional trading-style HTML report with optional filters"""
     return create_ib_style_html_table(
         asset_df,
         "Portfolio Management System - Asset Analysis",
         output_file,
         symbol_filter,
-        type_filter
+        type_filter,
+        name_filter
     )
 
 def create_interactive_dashboard(asset_df, trades=None, port=8050):
@@ -956,6 +1088,9 @@ def create_interactive_dashboard(asset_df, trades=None, port=8050):
 
 def print_alerts_modern(asset_df, output_file="professional_alerts_report.html"):
     """Generate modern responsive HTML report for alerts"""
+
+    # Add names to dataframe
+    asset_df = add_names_to_dataframe(asset_df)
 
     # Create separate tables for different alert types
     alerts_html = f"""
