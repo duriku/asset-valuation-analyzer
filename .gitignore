@@ -1,1 +1,5 @@
 .idea
+__pycache__
+asset-valuation-analyzer.iml
+modern_alerts_report.html
+modern_asset_report.html
