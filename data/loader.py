@@ -305,8 +305,17 @@ def download_incremental_daily_data(ticker, period='15mo'):
             # Debug: print data structure
             print(f"DEBUG {ticker}: columns={list(data.columns)}, index_type={type(data.index)}")
 
+            # Save to database
             save_daily_data(ticker, data)
-            return data
+
+            # Return properly formatted data (load from DB to ensure consistent format)
+            formatted_data = load_daily_data_from_db(ticker)
+            if not formatted_data.empty:
+                return formatted_data
+            else:
+                # Fallback: format the data manually if DB load fails
+                return format_yfinance_data(data)
+
         except Exception as e:
             print(f"Error downloading {ticker}: {e}")
             import traceback
@@ -334,6 +343,38 @@ def download_incremental_daily_data(ticker, period='15mo'):
     except Exception as e:
         print(f"Error updating {ticker}: {e}")
         return load_daily_data_from_db(ticker)
+
+def format_yfinance_data(data):
+    """Format yfinance data to consistent structure."""
+    if data.empty:
+        return pd.DataFrame()
+
+    df = data.copy()
+
+    # Handle MultiIndex columns
+    if isinstance(df.columns, pd.MultiIndex):
+        # Flatten MultiIndex columns - take the first level (metric name)
+        df.columns = [col[0] if isinstance(col, tuple) else col for col in df.columns]
+
+    # Ensure we have the expected columns
+    expected_cols = ['Open', 'High', 'Low', 'Close', 'Volume']
+    missing_cols = [col for col in expected_cols if col not in df.columns]
+    if missing_cols:
+        print(f"Warning: Missing columns {missing_cols} in yfinance data")
+        return pd.DataFrame()
+
+    # Ensure index is DatetimeIndex
+    if not isinstance(df.index, pd.DatetimeIndex):
+        if 'Date' in df.columns:
+            df.set_index('Date', inplace=True)
+        else:
+            print("Warning: Could not find date information in data")
+            return pd.DataFrame()
+
+    # Select only the columns we need
+    df = df[expected_cols]
+
+    return df
 
 def download_incremental_hourly_data(ticker, hours_back=24):
     """Download hourly data for the last N hours."""
@@ -374,11 +415,20 @@ def download_incremental_hourly_data(ticker, hours_back=24):
         new_data = yf.download(ticker, period=period, interval='1h', auto_adjust=True)
 
         if not new_data.empty:
-            save_hourly_data(ticker, new_data)
+            # Format data before saving
+            formatted_data = format_yfinance_data(new_data)
+            if not formatted_data.empty:
+                save_hourly_data(ticker, formatted_data)
 
         # Return only the requested time window
         cutoff_time = current_time - timedelta(hours=hours_back)
-        return load_hourly_data_from_db(ticker, start_datetime=cutoff_time)
+        result = load_hourly_data_from_db(ticker, start_datetime=cutoff_time)
+
+        if result.empty and not new_data.empty:
+            # Fallback to formatted fresh data if DB load fails
+            return format_yfinance_data(new_data)
+
+        return result
 
     except Exception as e:
         print(f"Error downloading hourly data for {ticker}: {e}")
