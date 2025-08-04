@@ -1,4 +1,3 @@
-
 # output/report.py
 import pandas as pd
 import plotly.graph_objects as go
@@ -6,48 +5,54 @@ from plotly.subplots import make_subplots
 import dash
 from dash import html, dcc, dash_table, Input, Output, callback
 import json
-import yfinance as yf
-
-def get_asset_name(symbol):
-    """Get the full name of an asset from Yahoo Finance"""
-    try:
-        ticker = yf.Ticker(symbol)
-        info = ticker.info
-        return info.get('longName', info.get('shortName', symbol))
-    except:
-        return symbol
 
 def add_names_to_dataframe(df):
-    """Add Name column to the dataframe"""
-    if 'Name' not in df.columns:
-        df_with_names = df.copy()
+    """
+    Ensure Name column exists and is positioned correctly next to Ticker column.
+    This should be called with a dataframe that already has names from the enhanced loader.
+    """
+    if df.empty:
+        return df
 
-        # Get the symbol column (could be 'Ticker' or index)
-        if 'Ticker' in df.columns:
-            symbols = df['Ticker'].tolist()
-        else:
-            symbols = df.index.tolist()
+    df_copy = df.copy()
 
-        # Fetch names for all symbols
-        names = []
-        for symbol in symbols:
-            name = get_asset_name(symbol)
-            names.append(name)
+    # Case 1: Name column already exists but might be in wrong position
+    if 'Name' in df.columns and 'Ticker' in df.columns:
+        # Reorder columns to put Name right after Ticker
+        ticker_index = df.columns.get_loc('Ticker')
+        name_index = df.columns.get_loc('Name')
 
-        # Insert Name column right after Ticker/Symbol
-        if 'Ticker' in df.columns:
-            ticker_index = df.columns.get_loc('Ticker')
-            # Create new dataframe with Name column inserted
+        if name_index != ticker_index + 1:
+            # Name is not in the right position, move it
             cols = df.columns.tolist()
-            cols.insert(ticker_index + 1, 'Name')
-            df_with_names = df_with_names.reindex(columns=cols)
-            df_with_names['Name'] = names
+            cols.remove('Name')  # Remove Name from current position
+            cols.insert(ticker_index + 1, 'Name')  # Insert after Ticker
+            df_copy = df_copy[cols]  # Reorder columns
+
+        return df_copy
+
+    # Case 2: Name column missing, need to add it
+    # This should rarely happen if enhanced loader is working properly
+    if 'Name' not in df.columns:
+        if 'Ticker' in df.columns:
+            # Get the proper asset names using the enhanced loader
+            from data.loader import get_asset_names_for_dataframe
+            try:
+                df_copy = get_asset_names_for_dataframe(df_copy)
+                return df_copy
+            except ImportError:
+                # Fallback if enhanced loader not available
+                ticker_index = df.columns.get_loc('Ticker')
+                cols = df.columns.tolist()
+                cols.insert(ticker_index + 1, 'Name')
+                df_copy = df_copy.reindex(columns=cols)
+                df_copy['Name'] = df['Ticker']  # Use ticker as fallback
+                print("Warning: Using ticker symbols as names - enhanced loader not available")
         else:
-            df_with_names.insert(0, 'Name', names)
+            # Ticker symbols in index
+            df_copy.insert(0, 'Name', df.index.tolist())
 
-        return df_with_names
-
-    return df
+    return df_copy
 
 def get_color_for_percentage(value):
     """Return color based on percentage value - professional trading colors"""
@@ -111,7 +116,7 @@ def filter_dataframe(df, symbol_filter=None, type_filter=None, name_filter=None)
 def create_ib_style_html_table(df, title, output_file=None, symbol_filter=None, type_filter=None, name_filter=None):
     """Create an Interactive Brokers-style professional trading table with interactive filters"""
 
-    # Add names to dataframe
+    # Ensure names are present (fallback if not provided by model)
     df = add_names_to_dataframe(df)
 
     # Store original data for client-side filtering
@@ -796,7 +801,7 @@ def create_ib_style_html_table(df, title, output_file=None, symbol_filter=None, 
 def create_ib_style_dash_app(df, title="Portfolio Management System"):
     """Create an Interactive Brokers-style Dash app"""
 
-    # Add names to dataframe
+    # Ensure names are present (fallback if not provided by model)
     df = add_names_to_dataframe(df)
 
     # Prepare columns for Dash DataTable
@@ -1089,7 +1094,7 @@ def create_interactive_dashboard(asset_df, trades=None, port=8050):
 def print_alerts_modern(asset_df, output_file="professional_alerts_report.html"):
     """Generate modern responsive HTML report for alerts"""
 
-    # Add names to dataframe
+    # Ensure names are present (fallback if not provided by model)
     asset_df = add_names_to_dataframe(asset_df)
 
     # Create separate tables for different alert types

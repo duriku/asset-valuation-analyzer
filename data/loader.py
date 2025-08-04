@@ -5,6 +5,8 @@ import pandas as pd
 from datetime import datetime, timedelta
 import os
 from config import ASSETS_FILE, CURRENCIES_FILE
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import time
 
 # Database configuration
 DB_PATH = "data/market_data.db"
@@ -51,6 +53,228 @@ def ensure_db_exists():
                                                                     last_hourly_update DATETIME
                      )
                      """)
+
+        # NEW: Asset names cache table
+        conn.execute("""
+                     CREATE TABLE IF NOT EXISTS asset_names (
+                                                                ticker TEXT PRIMARY KEY,
+                                                                long_name TEXT,
+                                                                short_name TEXT,
+                                                                last_updated DATE
+                     )
+                     """)
+
+def get_asset_name_from_cache(ticker):
+    """Get asset name from local cache."""
+    with sqlite3.connect(DB_PATH) as conn:
+        result = conn.execute(
+            "SELECT long_name, short_name FROM asset_names WHERE ticker = ?",
+            (ticker,)
+        ).fetchone()
+
+    if result:
+        long_name, short_name = result
+        return long_name or short_name or ticker
+    return None
+
+def fetch_single_asset_name(ticker):
+    """Fetch name for a single asset with error handling."""
+    try:
+        ticker_obj = yf.Ticker(ticker)
+        info = ticker_obj.info
+        long_name = info.get('longName', '')
+        short_name = info.get('shortName', '')
+
+        # Clean up names - remove extra whitespace and handle None values
+        long_name = long_name.strip() if long_name else ''
+        short_name = short_name.strip() if short_name else ''
+
+        return {
+            'ticker': ticker,
+            'long_name': long_name,
+            'short_name': short_name,
+            'success': True
+        }
+    except Exception as e:
+        print(f"Warning: Could not fetch name for {ticker}: {e}")
+        return {
+            'ticker': ticker,
+            'long_name': '',
+            'short_name': '',
+            'success': False
+        }
+
+def batch_update_asset_names(tickers, max_workers=5, delay_between_requests=0.1):
+    """
+    Efficiently fetch and cache asset names for multiple tickers.
+
+    Args:
+        tickers: List of ticker symbols
+        max_workers: Number of concurrent threads (keep low to avoid rate limiting)
+        delay_between_requests: Delay between requests to avoid rate limiting
+    """
+    ensure_db_exists()
+
+    # Filter out tickers that are already cached and recent (less than 30 days old)
+    tickers_to_fetch = []
+    cached_count = 0
+
+    with sqlite3.connect(DB_PATH) as conn:
+        for ticker in tickers:
+            result = conn.execute(
+                """SELECT last_updated FROM asset_names
+                   WHERE ticker = ? AND last_updated > date('now', '-30 days')""",
+                (ticker,)
+            ).fetchone()
+
+            if not result:
+                tickers_to_fetch.append(ticker)
+            else:
+                cached_count += 1
+
+    if cached_count > 0:
+        print(f"Using cached names for {cached_count} tickers")
+
+    if not tickers_to_fetch:
+        print("All ticker names are already cached")
+        return
+
+    print(f"Fetching names for {len(tickers_to_fetch)} tickers...")
+
+    # Fetch names with controlled concurrency
+    results = []
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # Submit all requests
+        future_to_ticker = {
+            executor.submit(fetch_single_asset_name, ticker): ticker
+            for ticker in tickers_to_fetch
+        }
+
+        # Process results as they complete
+        for future in as_completed(future_to_ticker):
+            ticker = future_to_ticker[future]
+            try:
+                result = future.result()
+                results.append(result)
+
+                # Small delay to be respectful to the API
+                time.sleep(delay_between_requests)
+
+            except Exception as e:
+                print(f"Error fetching name for {ticker}: {e}")
+                results.append({
+                    'ticker': ticker,
+                    'long_name': '',
+                    'short_name': '',
+                    'success': False
+                })
+
+    # Save results to database
+    today = datetime.now().date()
+    with sqlite3.connect(DB_PATH) as conn:
+        for result in results:
+            conn.execute("""
+                INSERT OR REPLACE INTO asset_names 
+                (ticker, long_name, short_name, last_updated)
+                VALUES (?, ?, ?, ?)
+            """, (result['ticker'], result['long_name'], result['short_name'], today))
+
+    successful_fetches = sum(1 for r in results if r['success'])
+    print(f"Successfully fetched and cached {successful_fetches}/{len(results)} asset names")
+
+def get_asset_names_for_dataframe(df):
+    """
+    Add asset names to a dataframe efficiently using cached data.
+
+    Args:
+        df: DataFrame with either 'Ticker' column or ticker symbols as index
+
+    Returns:
+        DataFrame with 'Name' column added
+    """
+    if 'Name' in df.columns:
+        return df  # Already has names
+
+    df_copy = df.copy()
+
+    # Get ticker symbols from dataframe
+    if 'Ticker' in df.columns:
+        tickers = df['Ticker'].tolist()
+        ticker_column_exists = True
+    else:
+        tickers = df.index.tolist()
+        ticker_column_exists = False
+
+    # Ensure we have cached names for all tickers
+    batch_update_asset_names(tickers)
+
+    # Get names from cache
+    names = []
+    for ticker in tickers:
+        cached_name = get_asset_name_from_cache(ticker)
+        names.append(cached_name or ticker)  # Fallback to ticker if no name found
+
+    # Add names to dataframe
+    if ticker_column_exists:
+        # Insert Name column right after Ticker column
+        ticker_index = df.columns.get_loc('Ticker')
+        cols = df.columns.tolist()
+        cols.insert(ticker_index + 1, 'Name')
+        df_copy = df_copy.reindex(columns=cols)
+        df_copy['Name'] = names
+    else:
+        # Insert Name as first column when ticker is index
+        df_copy.insert(0, 'Name', names)
+
+    return df_copy
+
+def preload_asset_names(assets_file=None, currencies_file=None):
+    """
+    Preload and cache names for all assets and currencies.
+    Call this once to populate the cache for better performance.
+
+    Args:
+        assets_file: Path to assets file (uses default from config if None)
+        currencies_file: Path to currencies file (uses default from config if None)
+    """
+    assets_file = assets_file or ASSETS_FILE
+    currencies_file = currencies_file or CURRENCIES_FILE
+
+    all_tickers = []
+
+    # Load assets
+    if os.path.exists(assets_file):
+        with open(assets_file) as f:
+            assets = [line.strip() for line in f if line.strip()]
+            all_tickers.extend(assets)
+            print(f"Loaded {len(assets)} assets from {assets_file}")
+
+    # Load currencies
+    if os.path.exists(currencies_file):
+        with open(currencies_file) as f:
+            currencies = [line.strip() for line in f if line.strip()]
+            all_tickers.extend(currencies)
+            print(f"Loaded {len(currencies)} currencies from {currencies_file}")
+
+    if all_tickers:
+        print(f"Preloading names for {len(all_tickers)} tickers...")
+        batch_update_asset_names(all_tickers)
+        print("Name preloading complete!")
+    else:
+        print("No tickers found to preload")
+
+def cleanup_old_name_cache(days_to_keep=30):
+    """Clean up old cached names."""
+    with sqlite3.connect(DB_PATH) as conn:
+        cutoff_date = datetime.now().date() - timedelta(days=days_to_keep)
+        deleted_count = conn.execute(
+            "DELETE FROM asset_names WHERE last_updated < ?",
+            (cutoff_date,)
+        ).rowcount
+        print(f"Cleaned up {deleted_count} old cached asset names")
+
+# Keep all existing functions from the original loader.py...
+# [All the previous functions remain the same]
 
 def get_last_update_date(ticker, data_type='daily'):
     """Get the last update date for a ticker."""
@@ -529,7 +753,7 @@ def download_data(tickers, period='15mo', interval='1d', use_cache=True):
         ticker_list = [tickers]
     else:
         single_ticker = False
-        ticker_list = tickers
+        ticker_list = list(tickers)  # Ensure it's a list
 
     all_data = {}
     failed_tickers = []
@@ -553,12 +777,13 @@ def download_data(tickers, period='15mo', interval='1d', use_cache=True):
 
             if not data.empty:
                 all_data[ticker] = data
+                print(f"✓ Successfully loaded {ticker}: {data.shape[0]} records")
             else:
                 failed_tickers.append(ticker)
-                print(f"No data available for {ticker}")
+                print(f"✗ No data available for {ticker}")
 
         except Exception as e:
-            print(f"Error processing {ticker}: {e}")
+            print(f"✗ Error processing {ticker}: {e}")
             failed_tickers.append(ticker)
 
     if failed_tickers:
@@ -572,48 +797,10 @@ def download_data(tickers, period='15mo', interval='1d', use_cache=True):
         else:
             return pd.DataFrame()  # Empty DataFrame for failed single ticker
     else:
-        # Multiple tickers case - return dict-like structure
+        # Multiple tickers case - ALWAYS return a dictionary, even if empty
         if len(all_data) == 0:
-            return pd.DataFrame()  # Empty if all failed
-        elif len(all_data) == 1:
-            # Single successful ticker in a list - return as if it was multi-ticker format
-            return all_data
+            print("Warning: No data was successfully downloaded for any ticker")
+            return {}  # Empty dict instead of None or empty DataFrame
         else:
-            # Multiple successful tickers
+            print(f"Successfully downloaded data for {len(all_data)} out of {len(ticker_list)} tickers")
             return all_data
-
-def cleanup_old_hourly_data(days_to_keep=7):
-    """Clean up old hourly data to save space."""
-    cutoff_date = datetime.now() - timedelta(days=days_to_keep)
-
-    with sqlite3.connect(DB_PATH) as conn:
-        conn.execute(
-            "DELETE FROM hourly_data WHERE datetime < ?",
-            (cutoff_date,)
-        )
-        print(f"Cleaned up hourly data older than {days_to_keep} days")
-
-# Usage examples and debugging:
-# download_data(['AAPL', 'MSFT'])  # Uses cache, daily data
-# download_data(['AAPL'], interval='1h', period='24h')  # Hourly data for last 24h
-# download_data(['AAPL'], use_cache=False)  # Skip cache, direct download
-
-def debug_data_structure(ticker, data):
-    """Debug helper to understand data structure issues."""
-    print(f"\n=== DEBUG: Data structure for {ticker} ===")
-    print(f"Type: {type(data)}")
-    print(f"Shape: {data.shape if hasattr(data, 'shape') else 'N/A'}")
-    print(f"Empty: {data.empty if hasattr(data, 'empty') else 'N/A'}")
-    print(f"Index type: {type(data.index) if hasattr(data, 'index') else 'N/A'}")
-    print(f"Columns: {list(data.columns) if hasattr(data, 'columns') else 'N/A'}")
-    if hasattr(data, 'head'):
-        print("First few rows:")
-        print(data.head())
-    print("=" * 50)
-
-def test_ticker_processing(ticker):
-    """Test function to debug individual ticker processing."""
-    print(f"\nTesting {ticker}...")
-    data = download_incremental_daily_data(ticker)
-    debug_data_structure(ticker, data)
-    return data
