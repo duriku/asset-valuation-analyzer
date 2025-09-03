@@ -1,4 +1,7 @@
+requirements.txt
 # Simple visualization requirements (no AG Grid)
 plotly>=5.17.0
 dash>=2.14.0
 pandas>=1.5.0
+ta>=0.10.2
+yfinance>=0.2.50
